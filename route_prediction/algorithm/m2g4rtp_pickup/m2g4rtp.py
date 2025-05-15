@@ -27,7 +27,9 @@ class Decoder(nn.Module):
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        # 功能：指定解碼過程中的「瞄準(glimpse)」次數。原理：多次瞄準允許解碼器在做最終決策前多次查看輸入，每次瞄準後會更新查詢向量，使模型能夠關注更複雜的特徵組合。
         self.n_glimpses = n_glimpses
+        # 功能：控制在瞄準階段是否遮蔽已選節點。原理：當設為True時，瞄準機制不會關注已選擇的節點，幫助模型集中注意力在剩餘有效選項。
         self.mask_glimpses = mask_glimpses
         self.mask_logits = mask_logits
         self.use_tanh = use_tanh
@@ -37,6 +39,7 @@ class Decoder(nn.Module):
         self.lstm = nn.LSTMCell(embedding_dim, hidden_dim)
         self.pointer = Attention(hidden_dim, use_tanh=use_tanh, C=tanh_exploration)
         self.glimpse = Attention(hidden_dim, use_tanh=False)
+        # 功能：將注意力得分轉換為概率分布
         self.sm = nn.Softmax(dim=1)
         self.first_node_embed = nn.Linear(in_features=start_fea, out_features=hidden_dim, bias=False)
         self.lstm_eta = nn.LSTMCell(self.embedding_dim, hidden_dim)
@@ -53,7 +56,6 @@ class Decoder(nn.Module):
 
     def update_mask(self, mask, selected):
         def mask_modify(mask):
-
             all_true = mask.all(1)
             mask_mask = torch.zeros_like(mask)
             mask_mask[:, -1] = all_true
