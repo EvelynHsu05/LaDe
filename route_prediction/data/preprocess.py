@@ -7,10 +7,13 @@ from geopy.distance import geodesic
 
 from utils.util import ws, dir_check, write_list_list, dict_merge, multi_thread_work
 
+# 基礎輔助函數
+# 獲取 DataFrame 中指定列名的索引位置
 def idx(df, col_name):
     _idx_ = list(df.columns).index(col_name)
     return _idx_
 
+# 將時間字符串轉換為兩個數值：日期編碼和一天中的分鐘數
 def time2min(t):
     """
     time string -> date, minute of a day
@@ -21,6 +24,7 @@ def time2min(t):
     h, m, s = t.split(' ')[1].split(':')
     return int(f'{M}{d}'), 60 * int(h) + int(m) + int(s) / 60
 
+# 將資料按快遞員ID和日期分組，每個組形成一條"軌跡"
 def split_trajectory(df):
     """
     split the dataframe into trajectories of different couriers
@@ -40,6 +44,7 @@ def split_trajectory(df):
     courier_l.append(df[f:t])
     return courier_l
 
+# 檢查連續的速度異常點，標記需要保留的數據點
 def check_adjacent_speed(speed_index):
     keep_index = []
     for i in range(len(speed_index) - 1):
@@ -50,6 +55,7 @@ def check_adjacent_speed(speed_index):
     keep_index.extend([True])
     return keep_index
 
+# 多線程處理GPS異常點
 def drop_abnormal_gps_kernel(args: dict):
     c_lst = args['c_lst']
     result = {}
