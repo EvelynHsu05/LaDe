@@ -69,6 +69,7 @@ def drop_abnormal_gps_kernel(args: dict):
             result[o_id] = is_keep
     return result
 
+# 將非連續的ID或類別映射為連續的數字索引（從0開始）
 def reindex(dic):
     idx = 0
     map_dic = {}
@@ -77,6 +78,7 @@ def reindex(dic):
         idx += 1
     return map_dic
 
+# 過濾異常數據和異常快遞員
 def drop_unnormal(df, fout):
 
     # delete abnormal gps drift points
@@ -142,14 +144,17 @@ def drop_unnormal(df, fout):
 
     return df, (couriers, couriers_feature)
 
+# 將列表轉換成字符
 def list2str(l):
     # list to str
     return '.'.join(map(str, l))
 
+# 將字符轉換成列表
 def str2list(s):
     # str to list
     return [] if s == '' else list(map(int, s.split('.')))
 
+# 多線程計算每個時間點的未完成任務
 def get_todo_kernel(args: dict):
     result = {}
     def get_a_todo(x):
@@ -172,6 +177,7 @@ def get_todo_kernel(args: dict):
         c_v = c_v.apply(lambda x: get_a_todo(x), axis=1)
     return result
 
+# 計算每個快遞員的統計特徵
 def courier_info(df):
     """
     get courier's feature
@@ -205,6 +211,7 @@ def courier_info(df):
         feature_dict['speed_avg_order'][c] = feature_dict['dis_sum'][c] / (sum(c_df['time_to_last_package'])) if sum(c_df['time_to_last_package']) != 0 else 5
     return couriers, feature_dict
 
+# 多線程處理每條軌跡，計算訂單間的關係特徵
 def process_traj_kernel(args ={}):
     # process a trajectory of a courier
     c_lst = args['c_lst']
@@ -254,6 +261,7 @@ name_dict = {
         'expect_got_time': 'time_window_end'
     }
 
+# 建立AOI（Area of Interest）字典和特徵
 def make_aoi_dict(fin_temp):
     print('start make aoi dict')
     df = pd.read_csv(fin_temp + "/package_feature.csv", sep=',', encoding='utf-8')  # package features
@@ -311,7 +319,7 @@ def make_aoi_dict(fin_temp):
     print('aoi dict made')
     np.save(fout, data)
 
-
+# 整合所有數據處理步驟的主函數
 def pre_process(fin, fout, is_test=False, thread_num = 20):
     print('Raw input file:' + fin)
     print('Temporary file:' + fout)
