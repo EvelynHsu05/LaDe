@@ -84,10 +84,14 @@ def drop_unnormal(df, fout):
     # delete abnormal gps drift points
 
     courier_l = split_trajectory(df)
+    # thread_num：線程數量，表示要使用多少個並行線程來處理任務
     thread_num = 20
     n = len(courier_l)
+    # task_num：每個線程要處理的任務數量
     task_num = n // thread_num
+    # 將所有任務分割成task_num長度的字典
     args_lst = [{'c_lst': courier_l[i: min(i + task_num, n)]} for i in range(0, n, task_num)]
+    # 
     results = multi_thread_work(args_lst, drop_abnormal_gps_kernel, thread_num)
     result_dict = dict_merge(results)
     df['keep'] = df['order_id'].apply(lambda x: result_dict[x])
@@ -99,9 +103,9 @@ def drop_unnormal(df, fout):
     print('courier feature constructed')
 
     # filter couriers
-    rmv_wd = set(filter(lambda c: couriers_feature['work_days'][c] < 5, couriers))       # work days < 5
+    rmv_wd = set(filter(lambda c: couriers_feature['work_days'][c] < 5, couriers))       # 檢查快遞員work days < 5，符合回傳True，不符合（工作時長大於5天）回傳False，並將符合的快遞員ID轉換成set
     rmv_dmd = set(filter(lambda c: couriers_feature['dis_avg_day'][c] < 50, couriers))   # average travel distance per day < 50m
-    rmv_omd = set(filter(lambda c: couriers_feature['order_avg_day'][c] < 5, couriers))  # average package number < 3
+    rmv_omd = set(filter(lambda c: couriers_feature['order_avg_day'][c] < 5, couriers))  # average package number < 5
     rmv_tmo = set(filter(lambda c: couriers_feature['time_avg_order'][c] < 5, couriers)) # average got time difference between two consecutive packages in the trajectory< 5 min
     rmv_dmo = set(filter(lambda c: couriers_feature['dis_avg_order'][c] < 20, couriers)) # average distance between two consecutive packages in the trajectory < 20m
     remove_c = rmv_wd & rmv_dmd & rmv_omd & rmv_tmo & rmv_dmo
@@ -158,7 +162,7 @@ def str2list(s):
 def get_todo_kernel(args: dict):
     result = {}
     def get_a_todo(x):
-
+        # 獲取當前訂單完成時間，視為當下時間，將其他接受時間小於當下時間（已接受）且完成時間大於當下時間（還未送達）的訂單列出，為待辦任務清單
         now_time = x['finish_time_minute']
         accepted = c_v[c_v['accept_time_minute'] < now_time]  # accepted orders at current time
         todo = accepted[accepted['finish_time_minute'] > now_time]  # unfinished order at current time
@@ -203,11 +207,18 @@ def courier_info(df):
         feature_dict['id'][c] =  c
         feature_dict['order_sum'][c] = c_df.shape[0]
         feature_dict['dis_sum'][c] = sum(c_df['dis_to_last_package'])
+        
+        # 每筆訂單都有一個日期，但同一天可能有多筆訂單，我們想知道這個快遞員總共工作了幾天，
+所以要去重複後計算天數
+        # 比起work_days，更應該命名為活躍天數
         feature_dict['work_days'][c]=len(set(c_df['ds']))
+
         feature_dict['order_avg_day'][c]=feature_dict['order_sum'][c]/feature_dict['work_days'][c]
         feature_dict['dis_avg_day'][c]=feature_dict['dis_sum'][c]/feature_dict['work_days'][c]
         feature_dict['time_avg_order'][c]=np.mean(c_df['time_to_last_package'])
         feature_dict['dis_avg_order'][c] = np.mean(c_df['dis_to_last_package'])
+
+        # 如果時間為０，預設速度為５
         feature_dict['speed_avg_order'][c] = feature_dict['dis_sum'][c] / (sum(c_df['time_to_last_package'])) if sum(c_df['time_to_last_package']) != 0 else 5
     return couriers, feature_dict
 
@@ -221,7 +232,7 @@ def process_traj_kernel(args ={}):
         pbar.update(1)
         c_v = c.reset_index()
         for n, row in c_v.iterrows():
-            date_gt, gt = time2min(row['pickup_time'])  # got_time in minute
+            date_gt, gt = time2min(row['pickup_time'])  # pickup_time in minute
             date_at, at = time2min(row['accept_time'])  # accept_time in minute
             if date_gt != date_at:  # got_date != accept_date, means that the order is placed a day another day
                 at = at - 60 * 24
@@ -270,53 +281,51 @@ def make_aoi_dict(fin_temp):
     df['aoi_id'] = df['aoi_id'].apply(lambda x: aoi_dict[x])
 
     courier_l = split_trajectory(df)
-
+    
     aoi_nums = df["aoi_id"].nunique()
-    aoi_frequency_adj = np.zeros([aoi_nums, aoi_nums])
-    aoi_time_adj = np.zeros([aoi_nums, aoi_nums])
-    aoi_order_num = np.zeros([aoi_nums])
-    aoi_type = np.zeros([aoi_nums])
-    aoi_actime = np.zeros([aoi_nums])
-    aoi_lng = np.zeros([aoi_nums])
-    aoi_lat = np.zeros([aoi_nums])
-    pbar = tqdm(total=len(courier_l))
+    aoi_frequency_adj = np.zeros([aoi_nums, aoi_nums])  # AOI轉換頻率矩陣
+    aoi_time_adj = np.zeros([aoi_nums, aoi_nums])       # AOI轉換時間矩陣
+    aoi_order_num = np.zeros([aoi_nums])                # 每個AOI的訂單數
+    aoi_type = np.zeros([aoi_nums])                     # AOI類型
+    aoi_actime = np.zeros([aoi_nums])                   # AOI累計時間
+    aoi_lng = np.zeros([aoi_nums])                      # AOI累計經度
+    aoi_lat = np.zeros([aoi_nums])                      # AOI累計緯度
 
     for i in range(len(courier_l)):
         pbar.update(1)
         for j in range(len(courier_l[i])):
             aoi = courier_l[i].iloc[j]["aoi_id"]
-            aoi_order_num[aoi] += 1
-            aoi_type[aoi] = courier_l[i].iloc[j]["aoi_type"]
-            aoi_actime[aoi] += courier_l[i].iloc[j]["time_to_last_package"]
-            aoi_lng[aoi] += courier_l[i].iloc[j]["lng"]
-            aoi_lat[aoi] += courier_l[i].iloc[j]["lat"]
-            if j != 0:
-                from_aoi = courier_l[i].iloc[j - 1]["aoi_id"]
-                to_aoi = courier_l[i].iloc[j]["aoi_id"]
-                aoi_frequency_adj[from_aoi][to_aoi] += 1
+            aoi_order_num[aoi] += 1                    # 訂單數+1
+            aoi_type[aoi] = courier_l[i].iloc[j]["aoi_type"]  # 記錄AOI類型
+            aoi_actime[aoi] += courier_l[i].iloc[j]["time_to_last_package"]  # 累計時間
+            aoi_lng[aoi] += courier_l[i].iloc[j]["lng"]  # 累計經度
+            aoi_lat[aoi] += courier_l[i].iloc[j]["lat"]  # 累計緯度
+            if j != 0:  # 不是第一個訂單
+                from_aoi = courier_l[i].iloc[j - 1]["aoi_id"]  # 前一個AOI
+                to_aoi = courier_l[i].iloc[j]["aoi_id"]        # 當前AOI
+                aoi_frequency_adj[from_aoi][to_aoi] += 1       # 轉換頻率+1
                 aoi_time_adj[from_aoi][to_aoi] = aoi_time_adj[from_aoi][to_aoi] + courier_l[i].iloc[j]["time_to_last_package"]
-    aoi_frequency_adj[aoi_frequency_adj == 0] = 1
-    aoi_time_adj = np.divide(aoi_time_adj, aoi_frequency_adj)
-    aoi_actime = np.divide(aoi_actime, aoi_order_num)
-    aoi_lng = np.divide(aoi_lng, aoi_order_num)
-    aoi_lat = np.divide(aoi_lat, aoi_order_num)
+    aoi_frequency_adj[aoi_frequency_adj == 0] = 1  # 避免除以0
+    aoi_time_adj = np.divide(aoi_time_adj, aoi_frequency_adj)  # 平均轉換時間
+    aoi_actime = np.divide(aoi_actime, aoi_order_num)          # 平均處理時間
+    aoi_lng = np.divide(aoi_lng, aoi_order_num)                # 平均經度
+    aoi_lat = np.divide(aoi_lat, aoi_order_num)                # 平均緯度
 
     aoi_feature = np.zeros([aoi_nums, 5])
     for i in tqdm(range(aoi_nums)):
-        aoi_feature[i][0] = i
-        aoi_feature[i][1] = aoi_type[i]
-        aoi_feature[i][2] = aoi_lng[i]
-        aoi_feature[i][3] = aoi_lat[i]
-        aoi_feature[i][4] = aoi_actime[i]
+        aoi_feature[i][0] = i                # AOI索引
+        aoi_feature[i][1] = aoi_type[i]      # AOI類型
+        aoi_feature[i][2] = aoi_lng[i]       # AOI平均經度
+        aoi_feature[i][3] = aoi_lat[i]       # AOI平均緯度
+        aoi_feature[i][4] = aoi_actime[i]    # AOI平均處理時間
 
     data = {
-        "aoi_dict": aoi_dict,
-        "aoi_feature": aoi_feature,
-        "aoi_time_adj": aoi_time_adj,
-        "aoi_frequency_adj": aoi_frequency_adj
+        "aoi_dict": aoi_dict,              # AOI ID對應字典
+        "aoi_feature": aoi_feature,        # AOI特徵矩陣
+        "aoi_time_adj": aoi_time_adj,      # AOI轉換時間矩陣
+        "aoi_frequency_adj": aoi_frequency_adj  # AOI轉換頻率矩陣
     }
     fout = fin_temp + "/aoi_feature.npy"
-    print('aoi dict made')
     np.save(fout, data)
 
 # 整合所有數據處理步驟的主函數
@@ -398,6 +407,8 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
         df[col] = df['order_id'].apply(lambda x: result_dict[(x, col)])
 
     df['relative_dis_to_last_package'] = df.apply(lambda r: r['dis_to_last_package'] / r['dis_avg_day'] * 100 if r['dis_avg_day'] !=0 else 0, axis=1)
+
+    # 將經緯度轉換為geohash編碼，便於空間分析
     df['geohash_6'] = [geohash2.encode(lat, lon, 6) for lat, lon in zip(df['lat'], df['lng'])]
     df['geohash_3'] = [geohash2.encode(lat, lon, 3) for lat, lon in zip(df['lat'], df['lng'])]
     geo3_dict = {}
